@@ -1,0 +1,467 @@
+<!-- public/index.html -->
+<!DOCTYPE html>
+<html lang="zh-tw">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>硬體鎖管理系統</title>
+  <!-- 確保載入最新版 Bootstrap CSS -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/boxicons@2.1.0/css/boxicons.min.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 登入畫面 -->
+    <div v-if="!isLoggedIn" class="login-container animate__animated animate__fadeIn">
+      <div class="login-box">
+        <h2 class="mb-4 text-center">硬體鎖管理系統</h2>
+        <div class="mb-3">
+          <label for="username" class="form-label">使用者名稱</label>
+          <input type="text" class="form-control" id="username" v-model="loginForm.username" @keyup.enter="login">
+        </div>
+        <div class="mb-4">
+          <label for="password" class="form-label">密碼</label>
+          <div class="input-group">
+            <input :type="showPassword ? 'text' : 'password'" class="form-control" id="password" v-model="loginForm.password" @keyup.enter="login">
+            <button class="btn btn-outline-secondary" type="button" @click="showPassword = !showPassword">
+              <i class='bx' :class="[showPassword ? 'bx-hide' : 'bx-show']"></i>
+            </button>
+          </div>
+        </div>
+        <button class="btn btn-primary w-100" @click="login" :disabled="loginLoading">
+          <span v-if="loginLoading" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+          {{ loginLoading ? '登入中...' : '登入' }}
+        </button>
+        <div v-if="loginError" class="alert alert-danger mt-3" role="alert">
+          {{ loginError }}
+        </div>
+      </div>
+    </div>
+
+    <!-- 主應用畫面 -->
+    <div v-else class="app-container">
+      <!-- 頂部導航 -->
+      <nav class="navbar navbar-expand-lg">
+        <div class="container-fluid">
+          <a href="javascript:void(0);" class="navbar-brand" @click="refreshPage">硬體鎖管理系統</a>
+          <!-- 其餘導航欄內容保持不變... -->
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <span class="navbar-toggler-icon"></span>
+          </button>
+          <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav me-auto">
+              <li class="nav-item">
+                <a class="nav-link" :class="{ active: currentView === 'locks' }" href="#" @click="setView('locks')">
+                  <i class='bx bx-key'></i> 硬體鎖管理
+                </a>
+              </li>
+              <li class="nav-item" v-if="currentUser.is_admin">
+                <a class="nav-link" :class="{ active: currentView === 'users' }" href="#" @click="setView('users')">
+                  <i class='bx bx-user'></i> 使用者管理
+                </a>
+              </li>
+            </ul>
+            <div class="d-flex align-items-center">
+              <span class="text-light me-3">
+                <i class='bx bx-user-circle'></i>
+                {{ currentUser.username }}
+                <span v-if="currentUser.is_admin" class="badge bg-warning ms-1">管理員</span>
+              </span>
+              <div class="dropdown">
+                <button class="btn btn-outline-light btn-sm dropdown-toggle" type="button" id="userDropdown" data-bs-toggle="dropdown">
+                  <i class='bx bx-cog'></i>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
+                  <li><a class="dropdown-item" href="#" @click="showChangePasswordModal = true">變更密碼</a></li>
+                  <li><hr class="dropdown-divider"></li>
+                  <li><a class="dropdown-item" href="#" @click="logout">登出</a></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      <!-- 主內容區域 -->
+      <div class="content-area">
+        <!-- 硬體鎖管理 -->
+        <div v-if="currentView === 'locks'" class="animate__animated animate__fadeIn">
+          <div class="d-flex justify-content-between mb-3">
+            <h2><i class='bx bx-key'></i> 硬體鎖管理</h2>
+            <div>
+              <button class="btn btn-success me-2" type="button" @click.prevent="openAddLockModal">
+                <i class='bx bx-plus'></i> 新增硬體鎖
+              </button>
+              <button class="btn btn-primary" @click="exportData">
+                <i class='bx bx-export'></i> 匯出資料
+              </button>
+            </div>
+          </div>
+
+          <!-- 搜尋和篩選 -->
+          <div class="card mb-3">
+            <div class="card-body">
+              <div class="row g-2">
+                <div class="col-md-6">
+                  <input type="text" class="form-control" placeholder="搜尋..." v-model="lockSearchText">
+                </div>
+                <div class="col-md-3">
+                  <select class="form-select" v-model="lockStatusFilter">
+                    <option value="">全部狀態</option>
+                    <option value="在庫">在庫</option>
+                    <option value="借出">借出</option>
+                    <option value="已售出">已售出</option>
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <select class="form-select" v-model="lockSortBy">
+                    <option value="id-desc">ID (新到舊)</option>
+                    <option value="id-asc">ID (舊到新)</option>
+                    <option value="company_lock_id">公司編號 (A-Z)</option>
+                    <option value="hardware_id">硬體編號 (A-Z)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 硬體鎖表格 -->
+          <div class="card">
+            <div class="card-body">
+              <div class="table-responsive">
+                <table class="table table-striped table-hover">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>頻威智編號</th>
+                      <th>硬體鎖編號</th>
+                      <th>專案軟體</th>
+                      <th>借用/售出對象</th>
+                      <th>部門</th>
+                      <th>狀態</th>
+                      <th>特徵</th>
+                      <th>更新時間</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="lockTableBody">
+                    <tr v-if="filteredLocks.length === 0">
+                      <td colspan="10" class="text-center py-3">沒有找到硬體鎖記錄</td>
+                    </tr>
+                    <tr v-for="(lock, index) in filteredLocks" 
+                        :key="lock.id" 
+                        class="animate__animated animate__fadeIn"
+                        :data-id="lock.id"
+                        :data-index="index"
+                        :draggable="lockStatusFilter === ''"
+                        @dragstart="dragStart($event, lock)"
+                        @dragover.prevent
+                        @dragenter.prevent
+                        @drop="drop($event, lock)">
+                      <td>{{ lock.display_id || index + 1 }}</td>
+                      <td>{{ lock.company_lock_id }}</td>
+                      <td>{{ lock.hardware_id }}</td>
+                      <td>
+                        <div style="white-space: pre-line;">{{ lock.project_name }}</div>
+                      </td>
+                      <td>{{ lock.assigned_to }}</td>
+                      <td>{{ lock.department }}</td>
+                      <td>
+                        <span class="badge"
+                              :class="{
+                                'bg-success': lock.status === '在庫',
+                                'bg-warning': lock.status === '借出',
+                                'bg-info': lock.status === '已售出'
+                              }">
+                          {{ lock.status }}
+                        </span>
+                      </td>
+                      <td>
+                        <div style="white-space: pre-line;">{{ lock.features }}</div>
+                      </td>
+                      <td>{{ formatDate(lock.updated_at) }}</td>
+                      <td>
+                        <button class="btn btn-sm btn-info me-1" @click="editLock(lock)">
+                          <i class='bx bx-edit'></i>
+                        </button>
+                        <button class="btn btn-sm btn-danger" @click="confirmDeleteLock(lock)">
+                          <i class='bx bx-trash'></i>
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 使用者管理 -->
+        <div v-if="currentView === 'users' && currentUser.is_admin" class="animate__animated animate__fadeIn">
+          <div class="d-flex justify-content-between mb-3">
+            <h2><i class='bx bx-user'></i> 使用者管理</h2>
+            <button class="btn btn-success" @click="showAddUserModal = true">
+              <i class='bx bx-plus'></i> 新增使用者
+            </button>
+          </div>
+
+          <!-- 使用者表格 -->
+          <div class="card">
+            <div class="card-body">
+              <div class="table-responsive">
+                <table class="table table-striped table-hover">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>使用者名稱</th>
+                      <th>角色</th>
+                      <th>創建時間</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-if="users.length === 0">
+                      <td colspan="5" class="text-center py-3">沒有找到使用者</td>
+                    </tr>
+                    <tr v-for="user in users" :key="user.id" class="animate__animated animate__fadeIn">
+                      <td>{{ user.id }}</td>
+                      <td>{{ user.username }}</td>
+                      <td>
+                        <span class="badge" :class="{ 'bg-warning': user.is_admin, 'bg-secondary': !user.is_admin }">
+                          {{ user.is_admin ? '管理員' : '一般使用者' }}
+                        </span>
+                      </td>
+                      <td>{{ formatDate(user.created_at) }}</td>
+                      <td>
+                        <button v-if="user.id !== currentUser.id" class="btn btn-sm btn-warning me-1" @click="toggleAdminStatus(user)">
+                          {{ user.is_admin ? '取消管理員' : '設為管理員' }}
+                        </button>
+                        <button class="btn btn-sm btn-info me-1" @click="showResetPasswordModal(user)">
+                          重設密碼
+                        </button>
+                        <button v-if="user.id !== currentUser.id" class="btn btn-sm btn-danger" @click="confirmDeleteUser(user)">
+                          <i class='bx bx-trash'></i>
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 添加頁尾 -->
+      <footer class="footer">
+        <div class="container">
+          <div class="footer-content">
+            <span class="copyright-text">版權所有 © 2025 頻威智科技股份有限公司 · 保留所有權利</span>
+          </div>
+        </div>
+      </footer>
+
+      <!-- 新增硬體鎖 Modal -->
+      <div class="modal fade" id="addLockModal" tabindex="-1" data-bs-backdrop="static">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">{{ editingLock ? '編輯硬體鎖' : '新增硬體鎖' }}</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <div class="mb-3">
+                <label class="form-label">頻威智編號 <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" v-model="lockForm.company_lock_id" required>
+              </div>
+              <div class="mb-3">
+                <label class="form-label">硬體鎖編號 <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" v-model="lockForm.hardware_id" required>
+              </div>
+              <div class="mb-3">
+                <label class="form-label">專案軟體</label>
+                <textarea class="form-control" v-model="lockForm.project_name" rows="3" placeholder="每行輸入一個專案，可以輸入多個"></textarea>
+                <small class="form-text text-muted">可以輸入多個專案，每個專案佔一行</small>
+              </div>
+              <div class="mb-3">
+                <label class="form-label">借用/售出對象</label>
+                <input type="text" class="form-control" v-model="lockForm.assigned_to">
+              </div>
+              <div class="mb-3">
+                <label class="form-label">部門</label>
+                <input type="text" class="form-control" v-model="lockForm.department">
+              </div>
+              <div class="mb-3">
+                <label class="form-label">狀態</label>
+                <select class="form-select" v-model="lockForm.status">
+                  <option value="在庫">在庫</option>
+                  <option value="借出">借出</option>
+                  <option value="已售出">已售出</option>
+                </select>
+              </div>
+              <div class="mb-3">
+                <label class="form-label">特徵</label>
+                <textarea class="form-control" v-model="lockForm.features" rows="3" placeholder="硬體鎖的特殊設置或功能描述"></textarea>
+                <small class="form-text text-muted">描述硬體鎖的特殊設置、功能或其他特徵</small>
+              </div>
+              <div class="mb-3">
+                <label class="form-label">備註</label>
+                <textarea class="form-control" v-model="lockForm.remarks" rows="3"></textarea>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+              <button type="button" class="btn btn-primary" @click="saveLock" :disabled="saving">
+                <span v-if="saving" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                {{ saving ? '儲存中...' : '儲存' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 新增使用者 Modal -->
+      <div class="modal fade" id="addUserModal" tabindex="-1" data-bs-backdrop="static">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">新增使用者</h5>
+              <button type="button" class="btn-close" @click="closeAddUserModal"></button>
+            </div>
+            <div class="modal-body">
+              <div class="mb-3">
+                <label class="form-label">使用者名稱 <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" v-model="userForm.username" required>
+              </div>
+              <div class="mb-3">
+                <label class="form-label">密碼 <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" v-model="userForm.password" required>
+              </div>
+              <div class="mb-3 form-check">
+                <input type="checkbox" class="form-check-input" id="isAdmin" v-model="userForm.is_admin">
+                <label class="form-check-label" for="isAdmin">管理員權限</label>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" @click="closeAddUserModal">取消</button>
+              <button type="button" class="btn btn-primary" @click="saveUser" :disabled="saving">
+                <span v-if="saving" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                {{ saving ? '儲存中...' : '儲存' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 重設密碼 Modal -->
+      <div class="modal fade" id="resetPasswordModal" tabindex="-1" data-bs-backdrop="static">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">重設使用者密碼</h5>
+              <button type="button" class="btn-close" @click="closeResetPasswordModal"></button>
+            </div>
+            <div class="modal-body">
+              <p>您正在重設 <strong>{{ selectedUser ? selectedUser.username : '' }}</strong> 的密碼。</p>
+              <div class="mb-3">
+                <label class="form-label">新密碼 <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" v-model="resetPasswordForm.new_password" required>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" @click="closeResetPasswordModal">取消</button>
+              <button type="button" class="btn btn-primary" @click="resetUserPassword" :disabled="saving">
+                <span v-if="saving" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                {{ saving ? '儲存中...' : '重設密碼' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 變更密碼 Modal -->
+      <div class="modal fade" id="changePasswordModal" tabindex="-1" data-bs-backdrop="static">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">變更我的密碼</h5>
+              <button type="button" class="btn-close" @click="showChangePasswordModal = false"></button>
+            </div>
+            <div class="modal-body">
+              <div class="mb-3">
+                <label class="form-label">目前密碼 <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" v-model="changePasswordForm.currentPassword" required>
+              </div>
+              <div class="mb-3">
+                <label class="form-label">新密碼 <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" v-model="changePasswordForm.newPassword" required>
+              </div>
+              <div class="mb-3">
+                <label class="form-label">確認新密碼 <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" v-model="changePasswordForm.confirmPassword" required>
+              </div>
+              <div v-if="changePasswordError" class="alert alert-danger" role="alert">
+                {{ changePasswordError }}
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" @click="showChangePasswordModal = false">取消</button>
+              <button type="button" class="btn btn-primary" @click="changePassword" :disabled="saving">
+                <span v-if="saving" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                {{ saving ? '儲存中...' : '變更密碼' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 確認刪除 Modal -->
+      <div class="modal fade" id="confirmDeleteModal" tabindex="-1">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h5 class="modal-title">確認刪除</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <p>您確定要刪除這個{{ deleteType === 'lock' ? '硬體鎖' : '使用者' }}嗎？此操作無法復原。</p>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+              <button type="button" class="btn btn-danger" @click="confirmDelete" :disabled="saving">
+                <span v-if="saving" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                {{ saving ? '刪除中...' : '確認刪除' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 通知訊息 -->
+      <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 11">
+        <div id="toast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+          <div class="toast-header" :class="{ 'bg-success text-white': toastType === 'success', 'bg-danger text-white': toastType === 'error' }">
+            <strong class="me-auto">{{ toastTitle }}</strong>
+            <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+          </div>
+          <div class="toast-body">
+            {{ toastMessage }}
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 確保按正確順序載入所有必要的 JavaScript 庫 -->
+  <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.4/dist/jquery.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vue@3.2.47/dist/vue.global.js"></script>
+  <!-- 確保 XLSX 庫正確載入 -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
+
